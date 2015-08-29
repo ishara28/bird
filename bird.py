@@ -3,15 +3,13 @@ import redis
 import flask
 import json
 import urlparse
-from flask import Flask, Response, request, render_template
+from flask import Flask, Response, request, render_template, abort
 from flask.ext.cors import CORS, cross_origin
 
 app = Flask(__name__)
-cors = CORS(app)
 app.config['CORS_HEADERS'] = 'Content-Type'
-# url = urlparse.urlparse(os.environ.get('REDISCLOUD_URL'))
-# redis_handle = redis.Redis(host=url.hostname, port=url.port, password=url.password)
 redis_handle = redis.Redis('localhost')
+requiredFields = ("id", "title", "name")  # fields required for user object
 
 
 @app.route('/')
@@ -20,16 +18,44 @@ def hello():
     return 'Hello World!'
 
 
-@app.route('/users', methods=['GET'])
+@app.route('/users/<user_id>', methods=['GET'])
 @cross_origin()
-def get_user():
+def get_user(user_id):
     response = {}
-    user_id = request.args.get("id")
+    # user_id = request.args.get("id")
     user = redis_handle.get(user_id)
     if not user:
         response["msg"] = "no user found"
-        return flask.jsonify(response)
+        return Response(json.dumps(response), status=404, mimetype="application/json")
     return user
+
+
+@app.route('/users', methods=['POST'])
+@cross_origin()
+def save_user():
+    data = request.get_json(force=True)
+    response = {}
+    if all(field in data for field in requiredFields):
+        redis_handle.set(data["id"], json.dumps(data))
+        return Response(status=201)
+    else:
+        missing_key = str([val for val in requiredFields if val not in dict(data).keys()])
+        response["msg"] = "required key " + missing_key + " not found"
+        return Response(json.dumps(response), status=400)
+
+
+@app.route('/users/<user_id>', methods=['DELETE'])
+@cross_origin()
+def delete_user(user_id):
+    response = {}
+    resp = redis_handle.delete(user_id)
+    if resp == 0:
+        response["msg"] = "no such entity found"
+        status = 404
+    else:
+        response["msg"] = "Delete op is successful"
+        status = 200
+    return Response(json.dumps(response), status=status)
 
 
 @app.route('/clear', methods=['GET'])
@@ -37,26 +63,6 @@ def get_user():
 def clear_data():
     redis_handle.flushall()
     return "ok!"
-
-
-@app.route('/users', methods=['POST'])
-@cross_origin()
-def save_user():
-    response = {}
-    data = request.get_json(force=True)
-    redis_handle.set(data["id"], json.dumps(data))
-    response["status"] = "ok"
-    return flask.jsonify(response)
-
-
-@app.route('/users', methods=['DELETE'])
-@cross_origin()
-def delete_user():
-    response = {}
-    user_id = request.args.get("id")
-    redis_handle.delete(user_id)
-    response["status"] = "ok"
-    return flask.jsonify(response)
 
 
 if __name__ == "__main__":
